@@ -1,0 +1,255 @@
+import requests
+import openai
+import re
+from urllib.parse import quote
+
+# Configuración de WordPress/WooCommerce
+wordpress_url = 'https://yoursite.co.uk/wp-json/wp/v2/'
+woo_commerce_url = 'https://yoursite.co.uk/wp-json/wc/v3/'
+consumer_key = 'cs_consumer_key'
+consumer_secret = 'consumer_secret'
+
+# Configuración de OpenAI
+openai.api_key = 'sk-30dYoadfgdfgdfgdfgFbwOew3P0TRdfgdfg2WfT3BlbkFJeaH0eGIpZ3ARqIjl0SVF'
+
+def validate_input(prompt, validation_func):
+    """
+    Solicita una entrada al usuario y la valida usando una función de validación.
+    Continúa solicitando hasta que se proporcione una entrada válida.
+    :param prompt: El mensaje de solicitud para el usuario.
+    :param validation_func: La función de validación que toma la entrada y devuelve True si es válida, False de lo contrario.
+    :return: La entrada válida.
+    """
+    while True:
+        user_input = input(prompt)
+        if validation_func(user_input):
+            return user_input
+        else:
+            print("Entrada no válida. Inténtalo de nuevo.")
+
+
+def get_categories():
+    """
+    Obtiene las categorías de productos de WooCommerce.
+    :return: Una lista de categorías.
+    """
+    response = requests.get(f'{woo_commerce_url}products/categories', auth=(consumer_key, consumer_secret))
+
+    if response.status_code != 200:
+        print("Error al obtener las categorías de productos.")
+        exit()
+
+    categories = response.json()
+    return categories
+
+
+def get_category_products(category_id, num_products):
+    """
+    Obtiene los productos de una categoría específica en WooCommerce.
+    :param category_id: El ID de la categoría.
+    :param num_products: El número de productos a obtener.
+    :return: Una lista de productos.
+    """
+    response = requests.get(f'{woo_commerce_url}products?category={category_id}&per_page={num_products}',
+                            auth=(consumer_key, consumer_secret))
+
+    if response.status_code != 200:
+        print("Error al obtener los productos de la categoría seleccionada.")
+        exit()
+
+    products = response.json()
+    return products
+
+
+def generate_optimized_title(prompt):
+    """
+    Genera un nuevo título optimizado utilizando la API de OpenAI.
+    :param prompt: El prompt para la generación del título.
+    :return: El nuevo título generado.
+    """
+    response = openai.Completion.create(
+        engine='text-davinci-003',
+        prompt=prompt,
+        max_tokens=10,
+        n=1,
+        stop=None,
+        temperature=0.7
+    )
+    new_title = response.choices[0].text.strip()
+    return new_title
+
+
+def generate_optimized_slug(prompt):
+    """
+    Genera un nuevo slug optimizado utilizando la API de OpenAI y lo limpia.
+    :param prompt: El prompt para la generación del slug.
+    :return: El nuevo slug generado.
+    """
+    response = openai.Completion.create(
+        engine='text-davinci-003',
+        prompt=prompt,
+        max_tokens=10,
+        n=1,
+        stop=None,
+        temperature=0.7
+    )
+    new_slug = response.choices[0].text.strip()
+
+    # Limpiar el nuevo slug para asegurarse de que sea válido
+    new_slug = quote(new_slug.lower())  # Codificar caracteres especiales
+    new_slug = re.sub(r'\W+', '-', new_slug)  # Reemplazar caracteres no alfanuméricos por guiones
+
+    return new_slug
+
+
+def update_product_title(product_id, new_title):
+    """
+    Actualiza el título de un producto en WooCommerce.
+    :param product_id: El ID del producto a actualizar.
+    :param new_title: El nuevo título del producto.
+    """
+    updated_product = {
+        'name': new_title
+    }
+    response = requests.put(f'{woo_commerce_url}products/{product_id}',
+                            json=updated_product,
+                            auth=(consumer_key, consumer_secret))
+
+    if response.status_code == 200:
+        print(f"Título actualizado para el producto {product_id}.")
+    else:
+        print(f"Ocurrió un error al actualizar el título para el producto {product_id}.")
+
+
+def update_product_slug(product_id, new_slug):
+    """
+    Actualiza el slug de un producto en WooCommerce.
+    :param product_id: El ID del producto a actualizar.
+    :param new_slug: El nuevo slug del producto.
+    """
+    updated_product = {
+        'slug': new_slug
+    }
+    response = requests.put(f'{woo_commerce_url}products/{product_id}',
+                            json=updated_product,
+                            auth=(consumer_key, consumer_secret))
+
+    if response.status_code == 200:
+        print(f"Slug actualizado para el producto {product_id}.")
+    else:
+        print(f"Ocurrió un error al actualizar el slug para el producto {product_id}.")
+
+
+def main():
+    # Obtener las categorías de productos de WooCommerce
+    categories = get_categories()
+
+    # Imprimir las categorías y el número de productos
+    for index, category in enumerate(categories, start=1):
+        category_name = category['name']
+        category_id = category['id']
+
+        # Obtener el número de productos en la categoría
+        response = requests.get(f'{woo_commerce_url}products?category={category_id}&per_page=1',
+                                auth=(consumer_key, consumer_secret))
+
+        if response.status_code != 200:
+            print(f"Error al obtener el número de productos para la categoría {category_name}.")
+            continue
+
+        num_products = response.headers.get('x-wp-total')
+
+        print(f"{index}. {category_name} ({num_products} productos)")
+
+    # Selección de categoría de productos
+    selected_category = validate_input(
+        "Por favor, elija el número de la categoría de los productos que desea editar: ",
+        lambda x: x.isdigit() and 1 <= int(x) <= len(categories)
+    )
+    selected_category_id = categories[int(selected_category) - 1]['id']
+
+    # Cantidad de productos a editar
+    num_products = validate_input(
+        "Por favor, ingrese cuántos productos desea editar: ",
+        lambda x: x.isdigit() and int(x) > 0
+    )
+
+    # Obtener productos de la categoría seleccionada
+    products = get_category_products(selected_category_id, int(num_products))
+
+    # Procesar los productos
+    for product in products:
+        if isinstance(product, str):
+            print(f"Error: Se obtuvo una respuesta no válida para el producto: {product}")
+            continue
+
+        print(f"Producto ID: {product['id']}")
+        current_title = product['name']
+        current_slug = product['slug']
+        print(f"Título actual: {current_title}")
+        print(f"Slug actual: {current_slug}")
+
+        print("Opciones:")
+        print("1. Cambiar título automáticamente")
+        print("2. Cambiar slug automáticamente")
+        print("3. Cambiar título y slug automáticamente")
+        print("4. Ingresar título manualmente")
+        print("5. Dejarlo tal como está")
+        choice = validate_input(
+            "Por favor, elija una opción: ",
+            lambda x: x.isdigit() and 1 <= int(x) <= 5
+        )
+
+        if choice == '1':
+            new_title_prompt = f"Genera un nuevo título optimizado para el producto con el título actual: '{current_title}'"
+            new_title = generate_optimized_title(new_title_prompt)
+
+            print(f"Nuevo título sugerido: {new_title}")
+            approval = input("¿Desea aprobar este nuevo título? (s/n): ")
+
+            if approval.lower() == 's':
+                update_product_title(product['id'], new_title)
+
+        elif choice == '2':
+            new_slug_prompt = f"Genera un nuevo slug optimizado para el producto con el slug actual: '{current_slug}'"
+            new_slug = generate_optimized_slug(new_slug_prompt)
+
+            print(f"Nuevo slug sugerido: {new_slug}")
+            approval = input("¿Desea aprobar este nuevo slug? (s/n): ")
+
+            if approval.lower() == 's':
+                update_product_slug(product['id'], new_slug)
+
+        elif choice == '3':
+            new_title_prompt = f"Genera un nuevo título optimizado para el producto con el título actual: '{current_title}'"
+            new_title = generate_optimized_title(new_title_prompt)
+
+            new_slug_prompt = f"Genera un nuevo slug optimizado para el producto con el slug actual: '{current_slug}'"
+            new_slug = generate_optimized_slug(new_slug_prompt)
+
+            print(f"Nuevo título sugerido: {new_title}")
+            print(f"Nuevo slug sugerido: {new_slug}")
+
+            title_approval = input("¿Desea aprobar este nuevo título? (s/n): ")
+            slug_approval = input("¿Desea aprobar este nuevo slug? (s/n): ")
+
+            if title_approval.lower() == 's' and slug_approval.lower() == 's':
+                update_product_title(product['id'], new_title)
+                update_product_slug(product['id'], new_slug)
+
+        elif choice == '4':
+            new_title = input("Ingrese el nuevo título: ")
+
+            approval = input("¿Desea aprobar este nuevo título? (s/n): ")
+
+            if approval.lower() == 's':
+                update_product_title(product['id'], new_title)
+
+        print("------------------------------------")
+
+    print("The script has finished processing the products.")
+    print("Donations are appreciated. You can donate at the following link: https://www.paypal.com/donate/?hosted_button_id=YB946QYSHJENE")
+
+
+if __name__ == '__main__':
+    main()
